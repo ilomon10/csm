@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tmp
+.office/
+.tagconn/
+*.tgz
+build/
+coverage/

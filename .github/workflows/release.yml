@@ -1,0 +1,242 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Tag must match package.json and src/version.ts
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          src="$(sed -nE "s/^export const VERSION = '([^']+)'.*/\1/p" src/version.ts)"
+          echo "tag=$GITHUB_REF_NAME package.json=$pkg src/version.ts=$src"
+          test "$GITHUB_REF_NAME" = "v$pkg" || { echo "::error::tag $GITHUB_REF_NAME does not match package.json version v$pkg"; exit 1; }
+          test "$src" = "$pkg" || { echo "::error::src/version.ts VERSION ($src) does not match package.json ($pkg)"; exit 1; }
+
+  test:
+    name: tests
+    needs: verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  build-linux-windows:
+    name: build linux + windows binaries
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Compile
+        run: |
+          mkdir -p build/bin
+          # linux-x64 uses the baseline target so the binary also runs on CPUs without AVX2.
+          for t in linux-x64 linux-arm64 windows-x64; do
+            ext=""
+            bt="$t"
+            if [ "$t" = windows-x64 ]; then ext=".exe"; fi
+            if [ "$t" = linux-x64 ]; then bt="linux-x64-baseline"; fi
+            bun build --compile --minify --target="bun-$bt" dist/cli.js --outfile "build/bin/csm-$t$ext"
+          done
+          ls -l build/bin
+      - name: Smoke test linux-x64
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          test "$(./build/bin/csm-linux-x64 --version)" = "$want"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-linux-windows
+          path: build/bin/*
+          if-no-files-found: error
+
+  build-darwin:
+    name: build darwin binaries
+    needs: verify
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Compile and ad-hoc sign
+        run: |
+          mkdir -p build/bin
+          for t in darwin-x64 darwin-arm64; do
+            bun build --compile --minify --target="bun-$t" dist/cli.js --outfile "build/bin/csm-$t"
+            # unsigned arm64 binaries are killed by the kernel
+            codesign --force --sign - "build/bin/csm-$t"
+          done
+          ls -l build/bin
+      - name: Smoke test darwin-arm64
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          test "$(./build/bin/csm-darwin-arm64 --version)" = "$want"
+      - name: Smoke test darwin-x64 under Rosetta
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          softwareupdate --install-rosetta --agree-to-license
+          test "$(arch -x86_64 ./build/bin/csm-darwin-x64 --version)" = "$want"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-darwin
+          path: build/bin/*
+          if-no-files-found: error
+
+  smoke-windows:
+    name: smoke test windows-x64
+    needs: build-linux-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-linux-windows
+          path: bin
+      - name: csm-windows-x64.exe --version
+        shell: bash
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          test "$(./bin/csm-windows-x64.exe --version | tr -d '\r')" = "$want"
+
+  smoke-linux-arm64:
+    name: smoke test linux-arm64
+    needs: build-linux-windows
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-linux-windows
+          path: bin
+      - name: csm-linux-arm64 --version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          chmod +x ./bin/csm-linux-arm64
+          test "$(./bin/csm-linux-arm64 --version)" = "$want"
+
+  pack:
+    name: npm tarball
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: npm pack (runs prepare, which runs tsc)
+        run: |
+          mkdir -p build/pack
+          npm pack --pack-destination build/pack
+          ls -l build/pack
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tarball
+          path: build/pack/*.tgz
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: [test, build-linux-windows, build-darwin, smoke-windows, smoke-linux-arm64, pack]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Assemble assets
+        run: |
+          mkdir -p release
+          cp artifacts/* release/
+          cp scripts/install.sh scripts/install.ps1 release/
+          cd release
+          ls -l
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 8 || { echo "::error::expected 8 assets before SHA256SUMS"; exit 1; }
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/csm-*
+            release/*.tgz
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [ -f CHANGELOG.md ]; then
+            # String comparison instead of a regex, so no version character needs escaping.
+            VER="$ver" awk '
+              /^## / {
+                if (on) exit
+                h = substr($0, 4); sub(/^\[/, "", h); sub(/^v/, "", h)
+                v = ENVIRON["VER"]
+                if (substr(h, 1, length(v)) == v) {
+                  c = substr(h, length(v) + 1, 1)
+                  if (c == "" || c == "]" || c == " ") on = 1
+                }
+                next
+              }
+              on { print }
+            ' CHANGELOG.md > release-notes.md
+          fi
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::no CHANGELOG.md section for $ver; falling back to generated notes"
+            rm -f release-notes.md
+          fi
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          if [ -f release-notes.md ]; then
+            notes="--notes-file release-notes.md"
+          else
+            notes="--generate-notes"
+          fi
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" $notes $flags release/*

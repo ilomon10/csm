@@ -1,0 +1,28 @@
+{
+  "name": "claude-session-manager",
+  "version": "0.1.0-beta.1",
+  "private": true,
+  "description": "Switch between multiple Claude Code subscription logins on one host",
+  "license": "MIT",
+  "author": "ilomon10",
+  "homepage": "https://github.com/ilomon10/csm#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/ilomon10/csm.git" },
+  "bugs": { "url": "https://github.com/ilomon10/csm/issues" },
+  "keywords": ["claude", "claude-code", "cli", "profiles", "account-switcher", "multi-account"],
+  "type": "module",
+  "bin": { "csm": "dist/cli.js" },
+  "files": ["dist", "LICENSE", "README.md"],
+  "engines": { "node": ">=20" },
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node test/support/run-tests.mjs",
+    "test:only": "node test/support/run-tests.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

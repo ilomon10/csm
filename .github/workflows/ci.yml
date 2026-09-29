@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  binary:
+    name: binary tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Compile binary
+        shell: bash
+        run: bun build --compile dist/cli.js --outfile build/bin/csm
+      - name: Run the test suite against the binary
+        shell: bash
+        run: |
+          exe="${{ github.workspace }}/build/bin/csm"
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          CSM_TEST_CLI="$exe" pnpm test:only
+
+  lint-sh:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: shellcheck scripts/*.sh
+
+  lint-ps:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Analyze scripts
+        shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
+          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Warning,Error
+          $results | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message
+          if ($results) { exit 1 }
+
+  install-e2e-unix:
+    name: installer e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build binary
+        run: bun build --compile --minify dist/cli.js --outfile build/bin/csm
+      - name: Install from local assets, use, uninstall
+        shell: bash
+        run: |
+          set -euxo pipefail
+          version="$(node -p "require('./package.json').version")"
+          case "$(uname -s)" in Linux) os=linux ;; Darwin) os=darwin ;; esac
+          case "$(uname -m)" in x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; esac
+          art="$RUNNER_TEMP/art"
+          mkdir -p "$art"
+          cp build/bin/csm "$art/csm-$os-$arch"
+          (cd "$art" && shasum -a 256 "csm-$os-$arch" > SHA256SUMS)
+
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          touch "$HOME/.bashrc"
+          export SHELL=/bin/bash
+          export CSM_HOME="$HOME/csm-data"
+          export CSM_INSTALL_DIR="$HOME/bin"
+          export CSM_DOWNLOAD_BASE="file://$art"
+
+          sh scripts/install.sh --version "$version"
+          # upgrade in place must be idempotent
+          sh scripts/install.sh --version "$version"
+          export PATH="$CSM_INSTALL_DIR:$PATH"
+
+          test "$(csm --version)" = "$version"
+          grep -q '>>> csm >>>' "$HOME/.bashrc"
+          test "$(grep -c '>>> csm >>>' "$HOME/.bashrc")" = 1
+
+          # doctor may exit 1 (claude is not installed on the runner); the JSON must still parse
+          csm doctor --json > "$RUNNER_TEMP/doctor.json" || true
+          node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if(!Array.isArray(r.checks)) process.exit(1)" "$RUNNER_TEMP/doctor.json"
+
+          csm add x --no-login
+          csm rm x --yes
+
+          sh scripts/install.sh --uninstall --purge
+          test ! -e "$CSM_INSTALL_DIR/csm"
+          test ! -e "$CSM_HOME"
+          if grep -q '>>> csm >>>' "$HOME/.bashrc"; then echo "rc block still present"; exit 1; fi
+
+  install-e2e-windows:
+    name: installer e2e (windows, ${{ matrix.exe }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        exe: [pwsh, powershell]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build binary
+        shell: bash
+        run: bun build --compile --minify dist/cli.js --outfile build/bin/csm
+      - name: Install from local assets, use, uninstall
+        shell: pwsh
+        run: ${{ matrix.exe }} -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-windows.ps1

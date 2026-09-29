@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in csm does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: csm version
+      description: Output of `csm --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, Other]
+    validations:
+      required: true
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      description: bash, zsh, fish, PowerShell, cmd, ...
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Only if you installed with npm (`node --version`)
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`csm doctor` output"
+      description: Redact anything private.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true

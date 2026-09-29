@@ -467,6 +467,7 @@ On macOS, Claude Code stores logins in the system Keychain by default. `csm impo
 
 - `csm shell-init pwsh` generates PowerShell script; cmd.exe is not supported (install PowerShell 7 or run `csm run` directly)
 - On Windows, csm uses junctions and hardlinks instead of symlinks (no admin required)
+- If csm was installed with npm (a `csm.cmd` shim), PowerShell drops empty-string arguments such as `claude ""` before they reach csm. This is PowerShell's legacy handling of batch files; the standalone `csm.exe` from the installer is not affected.
 
 ## Environment Variables
 

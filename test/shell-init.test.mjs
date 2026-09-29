@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { baseEnv, hasCommand, mkTemp, pathWith, readLog, rmrf, runCli, skipOnWindows, spawnCapture, writeCsmShim } from './support/helpers.mjs';
+import { baseEnv, hasCommand, isWin, mkTemp, pathWith, readLog, rmrf, runCli, skipOnWindows, spawnCapture, writeCsmShim } from './support/helpers.mjs';
 
 const setup = async (t) => {
   const csmHome = await mkTemp('csm-shellinit-');
@@ -89,7 +89,9 @@ test('shell-init (pwsh): plain `claude` follows the current profile, args and ex
   const [record] = await readLog(testLog);
   assert.ok(record.argv.includes('x y'));
   // Older PowerShell drops empty-string args to native commands; 7.3+ passes them through.
-  if (/PS73:True/.test(res.stdout)) assert.deepEqual(record.argv, ['x y', '']);
+  // On Windows the csm shim is a .cmd file, and PowerShell 7 uses legacy argument passing for
+  // batch files, which drops empty strings too (the installed csm.exe is not affected).
+  if (/PS73:True/.test(res.stdout) && !isWin) assert.deepEqual(record.argv, ['x y', '']);
   assert.equal(record.env.CLAUDE_CONFIG_DIR, join(env.CSM_HOME, 'profiles', 'p'));
 });
 

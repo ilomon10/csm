@@ -100,7 +100,8 @@ test('renameRetry EXDEV falls back to verified copy + remove, links kept verbati
   await assert.rejects(lstat(src), /ENOENT/);
   if (haveLink) {
     assert.ok((await lstat(join(dst, 'lnk'))).isSymbolicLink());
-    assert.equal(await readlink(join(dst, 'lnk')), outside);
+    // Windows (Node 20) reports junction targets with a trailing separator; the copy keeps it verbatim.
+    assert.equal((await readlink(join(dst, 'lnk'))).replace(/[\\/]$/, ''), outside);
   }
   assert.equal(await readFile(join(outside, 'keep.txt'), 'utf8'), 'keep', 'link target must survive the src removal');
   assert.deepEqual((await readdir(dir)).filter((e) => e.includes('csm-tmp')), []);

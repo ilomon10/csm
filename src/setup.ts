@@ -3,7 +3,7 @@ import { accessSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { constants, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, delimiter, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { CsmError } from './errors.js';
 import { RETRY_CODES, exists, removeTreeSafe, renameRetry } from './fsx.js';
 import { ROOT } from './paths.js';
@@ -106,8 +106,9 @@ export const resolvePwsh = (
     const root = env['SystemRoot'] || env['SYSTEMROOT'] || 'C:\\Windows';
     return win32.isAbsolute(root) ? win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : null;
   }
-  for (const dir of (env['PATH'] ?? '').split(delimiter)) {
-    if (dir !== '' && isAbsolute(dir) && access(join(dir, name))) return join(dir, name);
+  // posix explicitly, so the result never depends on which OS happens to run this.
+  for (const dir of (env['PATH'] ?? '').split(posix.delimiter)) {
+    if (dir !== '' && posix.isAbsolute(dir) && access(posix.join(dir, name))) return posix.join(dir, name);
   }
   return null;
 };

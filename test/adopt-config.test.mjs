@@ -76,7 +76,7 @@ test('adopt-config --history merges projects no-clobber and pools history.jsonl'
 
   const res = await runCli(['adopt-config', '--history'], { env });
   assert.equal(res.code, 0, res.stderr);
-  assert.match(res.stdout, /1 colliding file\(s\) kept in .*projects\.csm-bak-\d+: proj-a\/memory\/MEMORY\.md/);
+  assert.match(res.stdout, /1 colliding file\(s\) kept in .*projects\.csm-bak-\d+: proj-a[\\/]memory[\\/]MEMORY\.md/);
 
   assert.equal(await readFile(join(main, 'projects', 'proj-a', 'memory', 'MEMORY.md'), 'utf8'), 'main memory');
   assert.equal(await readFile(join(main, 'projects', 'proj-a', 'memory', 'note.md'), 'utf8'), 'note');

@@ -22,7 +22,7 @@
     "test:only": "node test/support/run-tests.mjs"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
+    "@types/node": "^26.6.5",
     "typescript": "^5.5.0"
   }
 }
